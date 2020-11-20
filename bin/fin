@@ -1914,6 +1914,7 @@ show_help_system() {
 	printh "start" "Start Docksal"
 	printh "stop" "Stop Docksal"
 	printh "status" "Check Docksal status"
+	printh "info" "Show Docksal system information"
 
 	echo
 	echo "Examples:"
@@ -8145,6 +8146,14 @@ case "$1" in
 			stop)
 				shift
 				system_stop
+				;;
+			info)
+				check_for_updates
+				shift
+				sysinfo "$@"
+				;;
+			help)
+				show_help_system
 				;;
 			*)
 				show_help_system
