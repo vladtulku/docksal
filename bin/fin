@@ -1832,6 +1832,7 @@ show_help_project() {
 	printh "status" "List project services (alias: fin ps)"
 	printh "restart" "Restart project services (alias: fin restart)"
 	printh "reset [service]" "Recreate all or specified project services, their containers and volumes"
+	printh "logs [service]" "View output from project services (alias: fin logs)"
 	echo
 	printh "remove [option] [service]" "Remove all project services, networks and all their volumes, or specified services only"
 	printh "    rm [option] [service]" ""
@@ -8108,6 +8109,11 @@ case "$1" in
 				load_configuration
 				shift
 				docker-compose build "$@"
+				;;
+			logs)
+				load_configuration
+				shift
+				logs "$@"
 				;;
 			help)
 				show_help_project
