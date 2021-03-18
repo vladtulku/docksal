@@ -48,7 +48,7 @@ fi
 
 is_linux ()
 {
-	[[ "$OS_TYPE" == "Linux" ]]
+	[[ "$OS_TYPE" == "Linux" ]] || [[ "$OS_TYPE" == "WSL2" ]]
 }
 
 is_debian ()
@@ -1043,7 +1043,7 @@ check_docker_running ()
 
 		# Docker Desktop may not be running
 		if is_docker_native; then
-			if is_wsl; then
+			if is_wsl1; then
 				echo-error "Docker Desktop is not running or cannot be accessed" \
 					"WHAT TO DO?" \
 					"1. Start Docker Desktop, wait for Docker to start." \
@@ -1121,7 +1121,7 @@ docker_desktop_version ()
 		echo $(defaults read /Applications/Docker.app/Contents/Info.plist CFBundleShortVersionString) 2>/dev/null
 	fi
 
-	if is_wsl; then
+	if is_wsl1; then
 		# Query Windows registry for the "Docker Desktop" app "DisplayVersion"
 		powershell.exe 'Get-ItemPropertyValue "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Docker Desktop" DisplayVersion'
 	fi
@@ -2542,7 +2542,7 @@ docker_machine_env ()
 	rm -f "$CONFIG_DOCKER_MACHINE_ENV" 2>/dev/null
 
 	# get the env
-	if is_wsl; then
+	if is_wsl1; then
 		# In WSL, docker-machine is a Windows binary, but WSL does not understand Windows paths
 		_env=$(docker-machine env --shell=bash docksal | sed "s/\\\\/\//g" | sed "s/C:/\/c/")
 	else
@@ -2636,7 +2636,7 @@ docker_machine_remove ()
 		"$vboxmanage" hostonlyif remove "$vboxifname" 2>/dev/null
 		# Remove old DHCP leases because VirtualBox 6 retains then which breaks docker machine IP re-creation
 		is_mac && rm -f "$HOME/Library/VirtualBox/HostInterfaceNetworking-${vboxifname}-Dhcpd.leases"
-		is_wsl && rm -f "$WIN_HOME/.VirtualBox/HostInterfaceNetworking-${vboxifname}-Dhcpd.leases"
+		is_wsl1 && rm -f "$WIN_HOME/.VirtualBox/HostInterfaceNetworking-${vboxifname}-Dhcpd.leases"
 	fi
 }
 
@@ -3731,7 +3731,8 @@ stats_ping ()
 
 	# We are passing OS version via a custom User-Agent request header, which GA can parse
 	local user_agent
-	is_linux && user_agent="fin/${FIN_VERSION} (Linux ${OS_NAME}-${OS_VERSION})"
+	# Report WSL2 instance as Windows rather than Linux
+	(is_linux && ! is_wsl2) && user_agent="fin/${FIN_VERSION} (Linux ${OS_NAME}-${OS_VERSION})"
 	is_mac && user_agent="fin/${FIN_VERSION} (Macintosh Intel Mac OS X ${OS_VERSION})"
 	is_windows && user_agent="fin/${FIN_VERSION} (Windows NT ${OS_VERSION})"
 	is_wsl && user_agent="fin/${FIN_VERSION} (Windows NT 10.0)"
@@ -3935,7 +3936,7 @@ configure_mounts ()
 			fi
 		fi
 		# Create, then mount shares in VirtualBox
-		if (is_wsl || is_windows) && ! is_docker_native; then
+		if (is_wsl1 || is_windows) && ! is_docker_native; then
 			echo-green "Configuring SMB shares..."
 			docker_machine_mount_smb
 		fi
@@ -3944,7 +3945,7 @@ configure_mounts ()
 			echo-green "Removing NFS exports..."
 			nfs_share_remove
 		fi
-		if (is_wsl || is_windows) && ! is_docker_native; then
+		if (is_wsl1 || is_windows) && ! is_docker_native; then
 			echo-green "Removing SMB shares..."
 			smb_share_remove
 		fi
@@ -4025,7 +4026,7 @@ detect_dns ()
 			# In case no name servers found, fall back to the default
 			DOCKSAL_DNS_UPSTREAM="$DOCKSAL_DEFAULT_DNS"
 		fi
-	elif is_windows || is_wsl; then
+	elif is_windows || is_wsl1; then
 		# Look for Primary WINS server, it represents DNS whe WINS services is in use
 		local primary_wins=$(ipconfig.exe /all | grep "Primary WINS")
 		if [[ "$primary_wins" =~ ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
@@ -4182,7 +4183,7 @@ configure_resolver_windows () {
 
 # Configure system-wide *.docksal resolver
 # @param $1 mode, set to "off" to disable/revert settings, leave empty to enable
-configure_resolver_wsl () {
+configure_resolver_wsl1 () {
 	local mode="${1:-on}"
 
 	local dns_ip="$DOCKSAL_IP"
@@ -4258,7 +4259,7 @@ configure_resolver ()
 	is_mac && configure_resolver_mac "$mode" && return $?
 	is_linux && configure_resolver_alpine "$mode" && return $?
 	is_windows && configure_resolver_windows "$mode" && return $?
-	is_wsl && configure_resolver_wsl "$mode" && return $?
+	is_wsl1 && configure_resolver_wsl1 "$mode" && return $?
 }
 
 install_sshagent_service ()
@@ -4605,7 +4606,7 @@ install_tools_generic_linux ()
 }
 
 # Install WSL dependencies
-install_tools_wsl ()
+install_tools_wsl1 ()
 {
 	# Install Linux Docker client
 	if ! is_docker_version; then
@@ -4690,7 +4691,7 @@ install_virtualbox () {
 		vbox_pkg=$(cygpath -u "$USERPROFILE/Downloads")/$(basename "$url")
 	fi
 
-	if is_wsl; then
+	if is_wsl1; then
 		url="$URL_VBOX_WIN"
 		local USERPROFILE=$(wsl_path -u $(wsl_env "USERPROFILE"))
 		vbox_pkg="$USERPROFILE/Downloads"/$(basename "$url")
@@ -4733,7 +4734,7 @@ install_virtualbox () {
 	)
 
 	# Install Win/WSL
-	(is_windows || is_wsl) && (
+	(is_windows || is_wsl1) && (
 		chmod +x "$vbox_pkg"
 		"$vbox_pkg"
 	)
@@ -4801,7 +4802,7 @@ update_boot2docker ()
 				# Path to boot2docker.iso for the machine
 				local DEFAULT_MACHINE_ISO_PATH=".docker/machine/machines/${DEFAULT_MACHINE_NAME}/boot2docker.iso"
 				# On Windows machines are stored in the Windows user profile
-				if is_windows || is_wsl; then
+				if is_windows || is_wsl1; then
 					DEFAULT_MACHINE_ISO_PATH="${WIN_HOME}/${DEFAULT_MACHINE_ISO_PATH}"
 				else
 					# Mac - straightforward
@@ -4839,8 +4840,8 @@ update_tools ()
 			return $?
 	fi
 
-	is_wsl &&
-		install_tools_wsl &&
+	is_wsl1 &&
+		install_tools_wsl1 &&
 		return $?
 
 	is_windows &&
@@ -6691,9 +6692,10 @@ config_remove ()
 # Can add or remove a host to/from hosts file
 hosts ()
 {
-	is_windows || is_wsl && HOSTS_FILE="/c/windows/system32/drivers/etc/hosts"
+	# Handle hosts in WSL2 as Windows
+	( is_linux && ! is_wsl2 ) && HOSTS_FILE="/etc/hosts"
 	is_mac && HOSTS_FILE="/etc/hosts"
-	is_linux && HOSTS_FILE="/etc/hosts"
+	is_windows || is_wsl && HOSTS_FILE="/c/windows/system32/drivers/etc/hosts"
 	case "$1" in
 		add)
 			shift
@@ -7943,6 +7945,10 @@ if is_docker_native && (( $(ver_to_int $(docker_desktop_version)) >= $(ver_to_in
 	is_wsl && [[ "${DOCKSAL_DNS_DOMAIN}" == "${DOCKSAL_DNS_DOMAIN_DEFAULT}" ]] && DOCKSAL_DNS_DISABLED=1
 fi
 
+# Disable Docksal DNS in WSL2
+# TODO: Disable Docksal DNS everywhere
+is_wsl2 && DOCKSAL_DNS_DISABLED=1
+
 # Disable internal DNS resolver and use external domain if docksal-dns is disabled
 if [[ "$DOCKSAL_DNS_DISABLED" == "1" ]]; then
 	export DOCKSAL_NO_DNS_RESOLVER=1
@@ -7968,7 +7974,7 @@ wsl_mount_drives
 if is_linux; then
 	export DOCKER_HOST='';
 elif is_docker_native; then
-	if is_wsl; then
+	if is_wsl1; then
 		# WSL + Docker Desktop => connecting via HTTP
 		# The "legacy" (tcp://localhost:2375) connection option in Docker Desktop settings must be enabled.
 		export DOCKER_HOST='127.0.0.1:2375'
