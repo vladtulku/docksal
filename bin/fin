@@ -22,11 +22,21 @@ fi
 
 #-------------------------------- OS Checks ------------------------------------
 # OS version detection
-if  [[ -f "/etc/os-release" ]]; then
-	(uname -a | grep -v 'Microsoft' >/dev/null) && OS_TYPE="Linux" || OS_TYPE="WSL"
+# Linux or WSL 1/2
+if  [[ -r "/etc/os-release" ]]; then
 	IFS=";" read OS_NAME OS_VERSION OS_ID OS_ID_LIKE < <(source "/etc/os-release"; echo "$NAME;$VERSION_ID;$ID;$ID_LIKE")
+	# 'Microsoft' => WSL1. 'microsoft' => WSL2
+	if (uname -a | grep 'Microsoft' >/dev/null); then
+		OS_TYPE="WSL1"
+		OS_NAME="Windows / ${OS_NAME}"
+	elif (uname -a | grep 'microsoft' >/dev/null); then
+		OS_TYPE="WSL2"
+		OS_NAME="Windows / ${OS_NAME}"
+	else
+		OS_TYPE="Linux"
+	fi
 	export OS_TYPE OS_NAME OS_VERSION
-elif (uname | grep 'Darwin' >/dev/null); then
+elif (uname | grep -i 'Darwin' >/dev/null); then
 	export OS_TYPE="Darwin"
 	export OS_NAME="$(sw_vers -productName)"
 	export OS_VERSION="$(sw_vers -productVersion)"
@@ -69,7 +79,17 @@ is_windows ()
 
 is_wsl ()
 {
-	[[ "$OS_TYPE" == "WSL" ]]
+	[[ "$OS_TYPE" == "WSL1" ]] || [[ "$OS_TYPE" == "WSL2" ]]
+}
+
+is_wsl1 ()
+{
+	[[ "$OS_TYPE" == "WSL1" ]]
+}
+
+is_wsl2 ()
+{
+	[[ "$OS_TYPE" == "WSL2" ]]
 }
 
 is_mac ()
@@ -3714,6 +3734,7 @@ stats_ping ()
 	is_linux && user_agent="fin/${FIN_VERSION} (Linux ${OS_NAME}-${OS_VERSION})"
 	is_mac && user_agent="fin/${FIN_VERSION} (Macintosh Intel Mac OS X ${OS_VERSION})"
 	is_windows && user_agent="fin/${FIN_VERSION} (Windows NT ${OS_VERSION})"
+	is_wsl && user_agent="fin/${FIN_VERSION} (Windows NT 10.0)"
 
 	# Local instances
 	local source='Local'
