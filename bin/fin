@@ -339,6 +339,7 @@ URL_REPO_SYMFONY_WEBAPP="https://github.com/docksal/boilerplate-symfony-webapp.g
 URL_REPO_BACKDROP="https://github.com/docksal/boilerplate-backdrop.git"
 URL_ADDONS_HOSTING="https://raw.githubusercontent.com"
 URL_ADDONS_REPO="$URL_ADDONS_HOSTING/docksal/addons"
+STACKS_OVERRIDES_CLOUDFLARED="overrides-cloudflared.yml"
 STACKS_OVERRIDES_DD_BIND="overrides-dd-bind.yml"
 STACKS_OVERRIDES_IDE="overrides-ide.yml"
 STACKS_OVERRIDES_XHPROF="overrides-xhprof.yml"
@@ -1662,7 +1663,8 @@ show_help ()
 	printh "addon <command>" "Addons management commands: install, remove (${yellow}fin help addon${NC})"
 	printh "alias" "Manage aliases that allow ${yellow}fin @alias${NC} execution (${yellow}fin help alias${NC})"
 	printh "cleanup [options]" "Remove all unused Docker images, unused Docksal volumes and containers"
-	printh "share" "Create temporary public url for current project using ngrok"
+	printh "share" "Create a temporary public URL for the project using ngrok"
+	printh "share-v2" "Create a temporary public URL for the project using Cloudflare Tunnel"
 	printh "exec-url <url>" "Download script from URL and run it on host (URL should be public)"
 	printh "image <command>" "Image management commands: registry, save, load (${yellow}fin help image${NC})"
 	printh "hosts <command>" "Hosts file commands: add, remove, list (${yellow}fin help hosts${NC})"
@@ -2174,7 +2176,7 @@ show_help_alias ()
 show_help_share ()
 {
 	echo
-	echo "Share the project via public url generated with ngrok"
+	echo "Create a temporary public URL for the project using ngrok"
 
 	echo
 	echo "Usage: share [options]"
@@ -2191,6 +2193,27 @@ show_help_share ()
 	echo
 	echo "Examples:"
 	printh "fin share --host=subdomain.mysite.docksal" "Expose certain subdomain"
+}
+
+show_help_share-v2 ()
+{
+	echo
+	echo "Create a temporary public URL for the project using Cloudflare Tunnel"
+
+	echo
+	echo "Usage: share-v2 [command]"
+
+	echo
+	echo "Commands:"
+	printh "start" "Start tunnel and print public URL"
+	printh "stop" "Stop tunnel"
+	printh "status" "Prints tunnel status and public URL (if Active)"
+	printh "url" "Prints tunnel public URL"
+	printh "logs" "Prints tunnel container logs"
+
+	echo
+	echo "Examples:"
+	printh "fin share-v2 start" "Start tunnel and print public URL"
 }
 
 show_help_config ()
@@ -4872,6 +4895,7 @@ update_tools ()
 update_config_files ()
 {
 	files_to_download="
+			$STACKS_OVERRIDES_CLOUDFLARED
 			$STACKS_OVERRIDES_DD_BIND
 			$STACKS_OVERRIDES_IDE
 			$STACKS_OVERRIDES_XHPROF
@@ -5970,6 +5994,74 @@ ngrok_share ()
 		sh -c "${ARGS}"
 }
 
+# Cloudflare Tunnel (cloudflared) integration
+
+# Check whether cloudflared container is running
+cloudflared_is_running ()
+{
+	load_configuration
+	# docker ps is about 1s faster than docker-compose ps
+	local container_id=$(docker ps --quiet --filter "name=${COMPOSE_PROJECT_NAME_SAFE}_cloudflared_1")
+	[[ "${container_id}" != "" ]] && return 0 || return 1
+}
+
+# Get cloudflared container status
+cloudflared_get_status ()
+{
+	cloudflared_is_running && echo "Active" || echo "Inactive"
+}
+
+# Output cloudflared container logs
+cloudflared_get_logs ()
+{
+	load_configuration
+	# docker logs is about 1s faster than docker-compose logs
+	docker logs "${COMPOSE_PROJECT_NAME_SAFE}_cloudflared_1"
+}
+
+# Extracts tunnel host name from cloudflared container logs
+cloudflared_get_host ()
+{
+	cloudflared_get_logs 2>&1 | grep "trycloudflare.com" | tail -1 | awk '{print $4}'
+}
+
+# Nicely print tunnel URL
+cloudflared_print_url ()
+{
+	echo -e "${green}Public URL:${NC} ${yellow}$(cloudflared_get_host)${NC}"
+}
+
+# Nicely print tunnel status
+cloudflared_print_status ()
+{
+	echo -e "${green}Status:${NC} $(cloudflared_get_status)"
+	cloudflared_is_running &&
+		echo -e "${green}Public URL:${NC} ${yellow}$(cloudflared_get_host)${NC}"
+}
+
+# Enable and start cloudflared integration
+cloudflared_start ()
+{
+	# Write the variables into docksal-local.env
+	config_set --env=local "CLOUDFLARED_ENABLED=1"
+	# Force re-reading of configuration files and updated stack
+	COMPOSE_FILE="" ENV_FILE="" DOCKSAL_VOLUMES="" load_configuration
+	up
+
+	sleep 10 # Give the tunnel some time to initialize
+	cloudflared_print_url
+}
+
+# Disable and remove cloudflared integration
+cloudflared_stop ()
+{
+	# Remove the variables from docksal-local.env
+	config_remove --env=local "CLOUDFLARED_ENABLED"
+	# Force re-reading of configuration files and updated stack
+	COMPOSE_FILE="" ENV_FILE="" DOCKSAL_VOLUMES="" load_configuration
+	up
+}
+
 # Print information required for issue diagnostics
 # --all will print additional information that is hidden by default as it's not usually needed
 diagnose ()
@@ -6382,6 +6474,12 @@ load_configuration ()
 		if [[ -f "${overrides_xhprof_file}" ]] && [[ "$XHPROF_ENABLED" != "" ]] && [[ "$XHPROF_ENABLED" != "0" ]]; then
 			COMPOSE_FILE="${COMPOSE_FILE}${SEPARATOR}${overrides_xhprof_file}"
 		fi
+
+		# Enable Cloudflare Tunnel (cloudflared) integration
+		overrides_cloudflared_file="$(get_config_dir_dc)/stacks/overrides-cloudflared.yml"
+		if [[ -f "${overrides_cloudflared_file}" ]] && [[ "$CLOUDFLARED_ENABLED" != "" ]] && [[ "$CLOUDFLARED_ENABLED" != "0" ]]; then
+			COMPOSE_FILE="${COMPOSE_FILE}${SEPARATOR}${overrides_cloudflared_file}"
+		fi
 	fi
 
 	export COMPOSE_FILE
@@ -6500,8 +6598,12 @@ config_show ()
 	echo "VIRTUAL_HOST: ${VIRTUAL_HOST}"
 	echo "VIRTUAL_HOST_ALIASES: *.${VIRTUAL_HOST}"
 	echo "IP: $DOCKSAL_IP"
+	echo ""
 
-	echo "MYSQL:" $(docker-compose port db 3306 2>/dev/null | sed "s/0\.0\.0\.0/$DOCKSAL_IP/")
+	echo "MySQL endpoint:" $(docker-compose port db 3306 2>/dev/null | sed "s/0\.0\.0\.0/$DOCKSAL_IP/")
+	echo "Public URL:" $(cloudflared_get_host)
+
+	# Stop here for "fin config env"
 	[[ "$1" == "env" ]] && return
 
 	echo
@@ -8510,6 +8612,35 @@ case "$1" in
 		load_configuration
 		shift
 		ngrok_share "$@"
+		;;
+	share-v2)
+		shift
+		case "$1" in
+			start)
+				shift
+				cloudflared_start
+				;;
+			stop)
+				shift
+				cloudflared_stop
+				;;
+			status)
+				shift
+				cloudflared_print_status
+				;;
+			url)
+				shift
+				cloudflared_print_url
+				;;
+			logs)
+				shift
+				cloudflared_get_logs
+				;;
+			*)
+				shift
+				show_help_share-v2
+				;;
+		esac
 		;;
 	cleanup)
 		# no load_configuration
