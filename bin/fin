@@ -122,6 +122,10 @@ is_github_actions () {
 	[[ "$GITHUB_RUN_ID" != "" ]]
 }
 
+is_gitpod () {
+	[[ "$GITPOD_HOST" != "" ]]
+}
+
 #------------------------------------------------------------------------------
 
 # Returns absolute path to a file/folder in a Unix notation under cygwin on Windows.
